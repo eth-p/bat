@@ -14,7 +14,7 @@ impl AnsiStyle {
         AnsiStyle { attributes: None }
     }
 
-    pub fn update(&mut self, sequence: EscapeSequence) -> bool {
+    pub fn update(&mut self, sequence: EscapeSequence) -> AnsiStyleChanges {
         match &mut self.attributes {
             Some(a) => a.update(sequence),
             None => {
@@ -39,6 +39,13 @@ impl Display for AnsiStyle {
             None => Ok(()),
         }
     }
+}
+
+/// A struct containing information about how the AnsiStyle was updated.
+#[derive(Default)]
+pub struct AnsiStyleChanges {
+    pub unsupported: bool,
+    pub attributes_reset: bool,
 }
 
 struct Attributes {
@@ -103,11 +110,11 @@ impl Attributes {
     }
 
     /// Update the attributes with an escape sequence.
-    /// Returns `false` if the sequence is unsupported.
-    pub fn update(&mut self, sequence: EscapeSequence) -> bool {
+    /// Returns a struct describing what changes were made.
+    pub fn update(&mut self, sequence: EscapeSequence) -> AnsiStyleChanges {
         use EscapeSequence::*;
         match sequence {
-            Text(_) => return false,
+            Text(_) => return Default::default(),
             Unknown(_) => { /* defer to update_with_unsupported */ }
             OSC {
                 raw_sequence,
@@ -158,17 +165,21 @@ impl Attributes {
         self.strike.clear();
     }
 
-    fn update_with_sgr(&mut self, parameters: &str) -> bool {
+    fn update_with_sgr(&mut self, parameters: &str) -> AnsiStyleChanges {
         let mut iter = parameters
             .split(';')
             .map(|p| if p.is_empty() { "0" } else { p })
             .map(|p| p.parse::<u16>())
             .map(|p| p.unwrap_or(0)); // Treat errors as 0.
 
+        let mut contained_sgr_reset = false;
         self.has_sgr_sequences = true;
         while let Some(p) = iter.next() {
             match p {
-                0 => self.sgr_reset(),
+                0 => { 
+                    self.sgr_reset();
+                    contained_sgr_reset = true;
+                },
                 1 => self.bold = format!("\x1B[{}m", parameters),
                 2 => self.dim = format!("\x1B[{}m", parameters),
                 3 => self.italic = format!("\x1B[{}m", parameters),
@@ -191,15 +202,21 @@ impl Attributes {
             }
         }
 
-        true
+        AnsiStyleChanges {
+            attributes_reset: contained_sgr_reset,
+            ..Default::default()
+        }
     }
 
-    fn update_with_unsupported(&mut self, sequence: &str) -> bool {
+    fn update_with_unsupported(&mut self, sequence: &str) -> AnsiStyleChanges {
         self.unknown_buffer.push_str(sequence);
-        false
+        AnsiStyleChanges {
+            unsupported: true,
+            ..Default::default()
+        }
     }
 
-    fn update_with_hyperlink(&mut self, sequence: &str) -> bool {
+    fn update_with_hyperlink(&mut self, sequence: &str) -> AnsiStyleChanges {
         if sequence == "8;;" {
             // Empty hyperlink ID and HREF -> end of hyperlink.
             self.hyperlink.clear();
@@ -208,12 +225,12 @@ impl Attributes {
             self.hyperlink.push_str(sequence);
         }
 
-        true
+        AnsiStyleChanges::default()
     }
 
-    fn update_with_charset(&mut self, kind: char, set: impl Iterator<Item = char>) -> bool {
+    fn update_with_charset(&mut self, kind: char, set: impl Iterator<Item = char>) -> AnsiStyleChanges {
         self.charset = format!("\x1B{}{}", kind, set.take(1).collect::<String>());
-        true
+        AnsiStyleChanges::default()
     }
 
     fn parse_color(color: u16, parameters: &mut dyn Iterator<Item = u16>) -> String {

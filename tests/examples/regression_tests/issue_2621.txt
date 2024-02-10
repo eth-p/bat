@@ -1,0 +1,8 @@
+Line one.
+Line two is [31mhighlighted[0m now.
+Line three is [32mhighlighted[m as well.
+Line four is also [33mhighlighted[39m for testing reasons.
+Line five is not.
+
+NAME
+     [30;48;5;214mtmux[m - [38;5;231;48;5;22mterminal[0m [30;44mmultiplexer[m followed by some text

@@ -556,6 +556,10 @@ impl<'a> Printer for InteractivePrinter<'a> {
             return Ok(());
         }
 
+        let true_color = self.config.true_color;
+        let colored_output = self.config.colored_output;
+        let italics = self.config.use_italic_text;
+
         let mut cursor: usize = 0;
         let mut cursor_max: usize = self.config.term_width;
         let mut cursor_total: usize = 0;
@@ -573,6 +577,11 @@ impl<'a> Printer for InteractivePrinter<'a> {
             .background_color_highlight
             .filter(|_| highlight_this_line);
 
+        let background_color_style = background_color.map(|background_color| Style {
+            background: to_ansi_color(background_color, true_color),
+            ..Default::default()
+        });
+
         // Line decorations.
         if self.panel_width > 0 {
             let decorations = self
@@ -588,10 +597,6 @@ impl<'a> Printer for InteractivePrinter<'a> {
 
         // Line contents.
         if matches!(self.config.wrapping_mode, WrappingMode::NoWrapping(_)) {
-            let true_color = self.config.true_color;
-            let colored_output = self.config.colored_output;
-            let italics = self.config.use_italic_text;
-
             for &(style, region) in &regions {
                 let ansi_iterator = EscapeSequenceIterator::new(region);
                 for chunk in ansi_iterator {
@@ -617,18 +622,13 @@ impl<'a> Printer for InteractivePrinter<'a> {
 
                             // Pad the rest of the line.
                             if text.len() != text_trimmed.len() {
-                                if let Some(background_color) = background_color {
-                                    let ansi_style = Style {
-                                        background: to_ansi_color(background_color, true_color),
-                                        ..Default::default()
-                                    };
-
+                                if let Some(background_color_style) = background_color_style {
                                     let width = if cursor_total <= cursor_max {
                                         cursor_max - cursor_total + 1
                                     } else {
                                         0
                                     };
-                                    write!(handle, "{}", ansi_style.paint(" ".repeat(width)))?;
+                                    write!(handle, "{}", background_color_style.paint(" ".repeat(width)))?;
                                 }
                                 write!(handle, "{}", &text[text_trimmed.len()..])?;
                             }
@@ -637,7 +637,14 @@ impl<'a> Printer for InteractivePrinter<'a> {
                         // ANSI escape passthrough.
                         _ => {
                             write!(handle, "{}", chunk.raw())?;
-                            self.ansi_style.update(chunk);
+                            let style_changes = self.ansi_style.update(chunk);
+
+                            // Re-emit line background if attributes were reset.
+                            if style_changes.attributes_reset {
+                                if let Some(style) = background_color_style {
+                                    write!(handle, "{}", style.paint(""))?;
+                                }
+                            }
                         }
                     }
                 }
@@ -737,22 +744,24 @@ impl<'a> Printer for InteractivePrinter<'a> {
                         // ANSI escape passthrough.
                         _ => {
                             write!(handle, "{}", chunk.raw())?;
-                            self.ansi_style.update(chunk);
+                            let style_changes = self.ansi_style.update(chunk);
+
+                            // Re-emit line background if attributes were reset.
+                            if style_changes.attributes_reset {
+                                if let Some(style) = background_color_style {
+                                    write!(handle, "{}", style.paint(""))?;
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            if let Some(background_color) = background_color {
-                let ansi_style = Style {
-                    background: to_ansi_color(background_color, self.config.true_color),
-                    ..Default::default()
-                };
-
+            if let Some(background_color_style) = background_color_style {
                 write!(
                     handle,
                     "{}",
-                    ansi_style.paint(" ".repeat(cursor_max - cursor))
+                    background_color_style.paint(" ".repeat(cursor_max - cursor))
                 )?;
             }
             writeln!(handle)?;
